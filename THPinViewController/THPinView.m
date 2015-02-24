@@ -11,6 +11,8 @@
 #import "THPinNumPadView.h"
 #import "THPinNumButton.h"
 
+typedef void (^THPinAnimationCompletionBlock)(void);
+
 @interface THPinView () <THPinNumPadViewDelegate>
 
 @property (nonatomic, strong) UILabel *promptLabel;
@@ -24,6 +26,10 @@
 
 @property (nonatomic, strong) NSMutableString *input;
 
+@property (nonatomic, strong) NSString *creatingPin;
+
+@property (nonatomic) BOOL oldPinConfirmed;
+
 @end
 
 @implementation THPinView
@@ -35,7 +41,7 @@
     {
         _delegate = delegate;
         _input = [NSMutableString string];
-        
+
         _promptLabel = [[UILabel alloc] init];
         _promptLabel.translatesAutoresizingMaskIntoConstraints = NO;
         _promptLabel.textAlignment = NSTextAlignmentCenter;
@@ -45,7 +51,7 @@
         [self addSubview:_promptLabel];
         [self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[promptLabel]|" options:0 metrics:nil
                                                                        views:@{ @"promptLabel" : _promptLabel }]];
-        
+
         _inputCirclesView = [[THPinInputCirclesView alloc] initWithPinLength:[_delegate pinLengthForPinView:self]];
         _inputCirclesView.translatesAutoresizingMaskIntoConstraints = NO;
         [self addSubview:_inputCirclesView];
@@ -53,7 +59,7 @@
                                                          relatedBy:NSLayoutRelationEqual
                                                             toItem:self attribute:NSLayoutAttributeCenterX
                                                         multiplier:1.0f constant:0.0f]];
-        
+
         _numPadView = [[THPinNumPadView alloc] initWithDelegate:self];
         _numPadView.translatesAutoresizingMaskIntoConstraints = NO;
         _numPadView.backgroundColor = self.backgroundColor;
@@ -62,7 +68,7 @@
                                                          relatedBy:NSLayoutRelationEqual
                                                             toItem:self attribute:NSLayoutAttributeCenterX
                                                         multiplier:1.0f constant:0.0f]];
-        
+
         _bottomButton = [UIButton buttonWithType:UIButtonTypeCustom];
         _bottomButton.translatesAutoresizingMaskIntoConstraints = NO;
         _bottomButton.titleLabel.font = [UIFont systemFontOfSize:16.0f];
@@ -95,7 +101,7 @@
                                                                 toItem:self attribute:NSLayoutAttributeWidth
                                                             multiplier:0.4f constant:0.0f]];
         }
-        
+
         NSMutableString *vFormat = [NSMutableString stringWithString:@"V:|[promptLabel]-(paddingBetweenPromptLabelAndInputCircles)-[inputCirclesView]-(paddingBetweenInputCirclesAndNumPad)-[numPadView]"];
         if (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad) {
             _paddingBetweenPromptLabelAndInputCircles = 22.0f;
@@ -114,7 +120,7 @@
             }
         }
         [vFormat appendString:@"|"];
-        
+
         NSDictionary *metrics = @{ @"paddingBetweenPromptLabelAndInputCircles" : @(_paddingBetweenPromptLabelAndInputCircles),
                                    @"paddingBetweenInputCirclesAndNumPad" : @(_paddingBetweenInputCirclesAndNumPad),
                                    @"paddingBetweenNumPadAndBottomButton" : @(_paddingBetweenNumPadAndBottomButton) };
@@ -146,14 +152,43 @@
     self.numPadView.backgroundColor = self.backgroundColor;
 }
 
-- (NSString *)promptTitle
-{
-    return self.promptLabel.text;
-}
-
 - (void)setPromptTitle:(NSString *)promptTitle
 {
-    self.promptLabel.text = promptTitle;
+    if ([self.promptTitle isEqualToString:promptTitle]) {
+        return;
+    }
+    _promptTitle = [promptTitle copy];
+    [self updatePromptLabel];
+}
+
+- (void)setPromptChooseTitle:(NSString *)promptChooseTitle
+{
+    if ([self.promptChooseTitle isEqualToString:promptChooseTitle]) {
+        return;
+    }
+    _promptChooseTitle = [promptChooseTitle copy];
+    [self updatePromptLabel];
+}
+
+- (void)setPromptVerifyTitle:(NSString *)promptVerifyTitle
+{
+    if ([self.promptVerifyTitle isEqualToString:promptVerifyTitle]) {
+        return;
+    }
+    _promptVerifyTitle = [promptVerifyTitle copy];
+}
+
+- (void)updatePromptLabel
+{
+    switch (self.viewControllerType) {
+    case THPinViewControllerTypeStandard:
+    case THPinViewControllerTypeChangePin:
+        self.promptLabel.text = self.promptTitle;
+        break;
+    case THPinViewControllerTypeCreatePin:
+        self.promptLabel.text = self.promptChooseTitle;
+        break;
+    }
 }
 
 - (UIColor *)promptColor
@@ -183,6 +218,17 @@
     }
     _disableCancel = disableCancel;
     [self updateBottomButton];
+}
+
+- (void)setViewControllerType:(THPinViewControllerType)viewControllerType {
+    if (self.viewControllerType == viewControllerType) {
+        return;
+    }
+    _viewControllerType = viewControllerType;
+    if (self.viewControllerType == THPinViewControllerTypeCreatePin || self.viewControllerType == THPinViewControllerTypeChangePin) {
+        NSAssert(self.promptChooseTitle && self.promptVerifyTitle, @"THPinView needs promptChooseTitle and promptVerifyTitle");
+        [self updatePromptLabel];
+    }
 }
 
 #pragma mark - Public
@@ -230,20 +276,61 @@
 - (void)pinNumPadView:(THPinNumPadView *)pinNumPadView numberTapped:(NSUInteger)number
 {
     NSUInteger pinLength = [self.delegate pinLengthForPinView:self];
-    
+
     if ([self.input length] >= pinLength) {
         return;
     }
-    
+
     [self.input appendString:[NSString stringWithFormat:@"%lu", (unsigned long)number]];
     [self.inputCirclesView fillCircleAtPosition:[self.input length] - 1];
-    
+
     [self updateBottomButton];
-    
+
     if ([self.input length] < pinLength) {
         return;
     }
-    
+
+    if (self.viewControllerType == THPinViewControllerTypeChangePin && !self.oldPinConfirmed) {
+        if ([self.delegate pinView:self isPinValid:self.input]) {
+            self.oldPinConfirmed = YES;
+            [self slideCirclesAndLabelWithNextPrompt:self.promptChooseTitle completion:^{
+                [self resetInput];
+            }];
+        } else {
+            [self.inputCirclesView shakeWithCompletion:^{
+                [self resetInput];
+                [self.delegate incorrectPinWasEnteredInPinView:self];
+            }];
+        }
+        return;
+    }
+
+    if (self.viewControllerType == THPinViewControllerTypeChangePin || self.viewControllerType == THPinViewControllerTypeCreatePin) {
+        if (self.creatingPin == nil) {
+            self.creatingPin = self.input;
+            [self slideCirclesAndLabelWithNextPrompt:self.promptVerifyTitle completion:^{
+                [self resetInput];
+            }];
+            return;
+        }
+
+        if ([self.creatingPin isEqualToString:self.input]) {
+            double delayInSeconds = 0.3f;
+            dispatch_time_t popTime = dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delayInSeconds * NSEC_PER_SEC));
+            dispatch_after(popTime, dispatch_get_main_queue(), ^(void){
+                [self.delegate pin:self.creatingPin wasCreatedInPinView:self];
+            });
+            return;
+        } else {
+            [self.inputCirclesView shakeWithCompletion:^{
+                [self resetInput];
+                self.promptLabel.text = self.promptChooseTitle;
+                self.creatingPin = nil;
+            }];
+        }
+        return;
+    }
+
     if ([self.delegate pinView:self isPinValid:self.input])
     {
         double delayInSeconds = 0.3f;
@@ -251,9 +338,9 @@
         dispatch_after(popTime, dispatch_get_main_queue(), ^(void){
             [self.delegate correctPinWasEnteredInPinView:self];
         });
-        
+
     } else {
-        
+
         [self.inputCirclesView shakeWithCompletion:^{
             [self resetInput];
             [self.delegate incorrectPinWasEnteredInPinView:self];
@@ -262,6 +349,60 @@
 }
 
 #pragma mark - Util
+
+- (void)slideCirclesAndLabelWithNextPrompt:(NSString *)nextPrompt completion:(THPinAnimationCompletionBlock)completion {
+    CABasicAnimation* slideOutAnimation = [CABasicAnimation animationWithKeyPath:@"transform"];
+    slideOutAnimation.autoreverses = NO;
+    slideOutAnimation.duration = 0.3f;
+    slideOutAnimation.beginTime = 0.0f;
+    slideOutAnimation.toValue = [NSValue valueWithCATransform3D:CATransform3DMakeTranslation(-200, 0, 0) ];
+    slideOutAnimation.removedOnCompletion = NO;
+    slideOutAnimation.fillMode = kCAFillModeForwards;
+    slideOutAnimation.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseIn];
+
+    CABasicAnimation* slideInAnimation = [CABasicAnimation animationWithKeyPath:@"transform"];
+    slideInAnimation.autoreverses = NO;
+    slideInAnimation.duration = 0.3f;
+    slideInAnimation.beginTime = 0.3f;
+    slideInAnimation.fromValue = [NSValue valueWithCATransform3D:CATransform3DMakeTranslation(200, 0, 0) ];
+    slideInAnimation.toValue = [NSValue valueWithCATransform3D:CATransform3DMakeTranslation(0, 0, 0) ];
+    slideInAnimation.removedOnCompletion = NO;
+    slideInAnimation.fillMode = kCAFillModeForwards;
+    slideInAnimation.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+
+    CABasicAnimation* opacityOutAnimation = [CABasicAnimation animationWithKeyPath:@"opacity"];
+    opacityOutAnimation.autoreverses = NO;
+    opacityOutAnimation.toValue = [NSNumber numberWithFloat:0.0];
+    opacityOutAnimation.duration = 0.3f;
+    opacityOutAnimation.beginTime = 0.0f;
+    opacityOutAnimation.removedOnCompletion = NO;
+    opacityOutAnimation.fillMode = kCAFillModeForwards;
+    opacityOutAnimation.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseIn];
+
+    CABasicAnimation* opacityInAnimation = [CABasicAnimation animationWithKeyPath:@"opacity"];
+    opacityInAnimation.autoreverses = NO;
+    opacityInAnimation.toValue = [NSNumber numberWithFloat:1.0];
+    opacityInAnimation.duration = 0.3f;
+    opacityInAnimation.beginTime = 0.3f;
+    opacityInAnimation.removedOnCompletion = NO;
+    opacityInAnimation.fillMode = kCAFillModeForwards;
+    opacityInAnimation.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+
+    CAAnimationGroup* slideGroup = [[CAAnimationGroup alloc] init];
+    slideGroup.duration = 0.6f;
+    slideGroup.animations = @[slideOutAnimation, opacityOutAnimation, opacityInAnimation, slideInAnimation];
+
+    [self.promptLabel.layer addAnimation:slideGroup forKey:@"slideAnimation"];
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(slideGroup.duration/2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        self.promptLabel.text = nextPrompt;
+    });
+    [self.inputCirclesView animateWithAnimation:slideGroup andCompletion:^{
+        if (completion) {
+            completion();
+        }
+    }];
+}
 
 - (void)resetInput
 {

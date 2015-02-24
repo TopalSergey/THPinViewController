@@ -14,7 +14,7 @@
 
 @property (nonatomic, strong) THPinView *pinView;
 @property (nonatomic, strong) UIView *blurView;
-@property (nonatomic, strong) NSArray *blurViewContraints;
+@property (nonatomic, assign) NSArray *blurViewContraints;
 
 @end
 
@@ -30,6 +30,9 @@
         NSBundle *bundle = [NSBundle bundleWithPath:[[NSBundle mainBundle] pathForResource:@"THPinViewController"
                                                                                     ofType:@"bundle"]];
         _promptTitle = NSLocalizedStringFromTableInBundle(@"prompt_title", @"THPinViewController", bundle, nil);
+        _promptChooseTitle = NSLocalizedStringFromTableInBundle(@"prompt_choose_title", @"THPinViewController", bundle, nil);
+        _promptVerifyTitle = NSLocalizedStringFromTableInBundle(@"prompt_verify_title", @"THPinViewController", bundle, nil);
+        _viewControllerType = THPinViewControllerTypeStandard;
     }
     return self;
 }
@@ -37,17 +40,19 @@
 - (void)viewDidLoad
 {
     [super viewDidLoad];
-    
+
     if (self.translucentBackground) {
         self.view.backgroundColor = [UIColor clearColor];
         [self addBlurView];
     } else {
         self.view.backgroundColor = self.backgroundColor;
     }
-    
+
     self.pinView = [[THPinView alloc] initWithDelegate:self];
     self.pinView.backgroundColor = self.view.backgroundColor;
     self.pinView.promptTitle = self.promptTitle;
+    self.pinView.promptChooseTitle = self.promptChooseTitle;
+    self.pinView.promptVerifyTitle = self.promptVerifyTitle;
     self.pinView.promptColor = self.promptColor;
     self.pinView.hideLetters = self.hideLetters;
     self.pinView.disableCancel = self.disableCancel;
@@ -115,6 +120,25 @@
     self.pinView.promptTitle = self.promptTitle;
 }
 
+
+- (void)setPromptChooseTitle:(NSString *)promptChooseTitle
+{
+    if ([self.promptChooseTitle isEqualToString:promptChooseTitle]) {
+        return;
+    }
+    _promptChooseTitle = [promptChooseTitle copy];
+    self.pinView.promptChooseTitle = _promptChooseTitle;
+}
+
+- (void)setPromptVerifyTitle:(NSString *)promptVerifyTitle
+{
+    if ([self.promptVerifyTitle isEqualToString:promptVerifyTitle]) {
+        return;
+    }
+    _promptVerifyTitle = [promptVerifyTitle copy];
+    self.pinView.promptVerifyTitle = self.promptVerifyTitle;
+}
+
 - (void)setPromptColor:(UIColor *)promptColor
 {
     if ([self.promptColor isEqual:promptColor]) {
@@ -140,6 +164,15 @@
     }
     _disableCancel = disableCancel;
     self.pinView.disableCancel = self.disableCancel;
+}
+
+- (void)setViewControllerType:(THPinViewControllerType)viewControllerType
+{
+    if (self.viewControllerType == viewControllerType) {
+        return;
+    }
+    _viewControllerType = viewControllerType;
+    self.pinView.viewControllerType = self.viewControllerType;
 }
 
 #pragma mark - Blur
@@ -193,6 +226,18 @@
 - (BOOL)pinView:(THPinView *)pinView isPinValid:(NSString *)pin
 {
     return [self.delegate pinViewController:self isPinValid:pin];
+}
+
+- (void)pin:(NSString *)pin wasCreatedInPinView:(THPinView *)pinView
+{
+    if ([self.delegate respondsToSelector:@selector(pinViewController:createdPin:)]) {
+        [self.delegate pinViewController:self createdPin:pin];
+    }
+    [self dismissViewControllerAnimated:YES completion:^{
+        if ([self.delegate respondsToSelector:@selector(pinViewControllerDidDismissAfterPinEntryWasSuccessful:)]) {
+            [self.delegate pinViewControllerDidDismissAfterPinEntryWasSuccessful:self];
+        }
+    }];
 }
 
 - (void)cancelButtonTappedInPinView:(THPinView *)pinView

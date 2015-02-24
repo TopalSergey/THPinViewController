@@ -29,11 +29,11 @@
     if (self)
     {
         _pinLength = pinLength;
-        
+
         _circleViews = [NSMutableArray array];
         NSMutableString *format = [NSMutableString stringWithString:@"H:|"];
         NSMutableDictionary *views = [NSMutableDictionary dictionary];
-        
+
         for (NSUInteger i = 0; i < _pinLength; i++)
         {
             THPinInputCircleView* circleView = [[THPinInputCircleView alloc] init];
@@ -51,7 +51,7 @@
             [format appendFormat:@"[%@]", name];
             views[name] = circleView;
         }
-        
+
         [format appendString:@"|"];
         NSDictionary *metrics = @{ @"padding" : @(self.circlePadding) };
         [self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:format options:0 metrics:metrics views:views]];
@@ -62,7 +62,7 @@
 - (CGSize)intrinsicContentSize
 {
     return CGSizeMake(self.pinLength * [THPinInputCircleView diameter] + (self.pinLength - 1) * self.circlePadding,
-                      [THPinInputCircleView diameter]);
+            [THPinInputCircleView diameter]);
 }
 
 - (CGFloat)circlePadding
@@ -99,6 +99,20 @@ static const CGFloat THInitialShakeAmplitude = 40.0f;
     self.shakeAmplitude = THInitialShakeAmplitude;
     self.shakeCompletionBlock = completion;
     [self performShake];
+}
+
+- (void)animateWithAnimation:(CAAnimation *)animation andCompletion:(THPinInputCirclesViewShakeCompletionBlock)completion
+{
+    [self.layer addAnimation:animation forKey:@"slideAnimation"];
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(animation.duration/2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self unfillAllCircles];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(animation.duration/2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (completion) {
+                completion();
+            }
+        });
+    });
 }
 
 - (void)performShake
