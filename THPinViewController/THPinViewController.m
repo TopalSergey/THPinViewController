@@ -282,4 +282,16 @@
     }
 }
 
+- (BOOL)shouldAutorotate
+{
+    return YES;
+}
+
+- (NSUInteger)supportedInterfaceOrientations
+{
+    return UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad
+            ? [super supportedInterfaceOrientations]
+            : UIInterfaceOrientationPortrait | UIInterfaceOrientationPortraitUpsideDown;
+}
+
 @end
